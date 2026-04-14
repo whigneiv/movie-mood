@@ -143,18 +143,6 @@ const LOADING_MESSAGES = [
 function safeGetItem(key: string): string | null { if (typeof window === "undefined") return null; try { return localStorage.getItem(key); } catch { return null; } }
 function safeSetItem(key: string, value: string): void { if (typeof window === "undefined") return; try { localStorage.setItem(key, value); } catch {} }
 function safeRemoveItem(key: string): void { if (typeof window === "undefined") return; try { localStorage.removeItem(key); } catch {} }
-/** Reads `movieMood_blacklist` from storage; tolerates null, empty, invalid JSON, or non-array values. */
-function parseMovieBlacklistFromStorage(raw: string | null): number[] {
-  const trimmed = (raw ?? "").trim();
-  if (!trimmed) return [];
-  try {
-    const data: unknown = JSON.parse(trimmed);
-    if (!Array.isArray(data)) return [];
-    return data.filter((id): id is number => typeof id === "number" && Number.isFinite(id));
-  } catch {
-    return [];
-  }
-}
 function formatPhone(raw: string): string { const digits = raw.replace(/\D/g, "").slice(0, 11); if (digits.length <= 2) return digits; if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`; return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`; }
 function phoneDigits(formatted: string): string { return formatted.replace(/\D/g, ""); }
 function formatRuntime(runtime?: number): string { if (!runtime || runtime <= 0) return ""; const h = Math.floor(runtime / 60); const m = runtime % 60; if (h === 0) return `${m}m`; if (m === 0) return `${h}h`; return `${h}h ${m}m`; }
@@ -210,7 +198,7 @@ function mapQuizToActionFilters(quiz: QuizState) {
    ═══════════════════════════════════════════ */
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false); const [hasOnboarded, setHasOnboarded] = useState(false); const [userName, setUserName] = useState(""); const [userPhone, setUserPhone] = useState(""); const [activeTab, setActiveTab] = useState<Tab>("descobrir"); const [step, setStep] = useState<Step>(1); const [quiz, setQuiz] = useState<QuizState>({ mood: null, ritmo: null, vibe: null, companhia: null, epoca: null, streamings: [] }); const [movie, setMovie] = useState<Movie | null>(null); const [cachedMovies, setCachedMovies] = useState<Movie[]>([]); const [isSaving, setIsSaving] = useState(false); const [isLoading, setIsLoading] = useState(false); const [loadingMsg, setLoadingMsg] = useState(0); const [cinemateca, setCinemateca] = useState<CinematecaItem[]>([]); const [cinematecaLoading, setCinematecaLoading] = useState(false); const [cinematecaFilter, setCinematecaFilter] = useState<CinematecaFilter>("todos"); const [expandedCard, setExpandedCard] = useState<string | null>(null); const [trailerOpen, setTrailerOpen] = useState(false); const [trailerKey, setTrailerKey] = useState<string | null>(null); const [toasts, setToasts] = useState<ToastMessage[]>([]); const [shareLoading, setShareLoading] = useState(false); const [isOnboardingLoading, setIsOnboardingLoading] = useState(false); const [cinematecaPosterErrors, setCinematecaPosterErrors] = useState<Record<number, boolean>>({}); const [detailModalItem, setDetailModalItem] = useState<CinematecaItem | null>(null);
+  const [mounted, setMounted] = useState(false); const [hasOnboarded, setHasOnboarded] = useState(false); const [userName, setUserName] = useState(""); const [userPhone, setUserPhone] = useState(""); const [activeTab, setActiveTab] = useState<Tab>("descobrir"); const [step, setStep] = useState<Step>(1); const [quiz, setQuiz] = useState<QuizState>({ mood: null, ritmo: null, vibe: null, companhia: null, epoca: null, streamings: [] }); const [movie, setMovie] = useState<Movie | null>(null); const [cachedMovies, setCachedMovies] = useState<Movie[]>([]); const [isSaving, setIsSaving] = useState(false); const [isLoading, setIsLoading] = useState(false); const [loadingMsg, setLoadingMsg] = useState(0); const [cinemateca, setCinemateca] = useState<CinematecaItem[]>([]); const [cinematecaLoading, setCinematecaLoading] = useState(false); const [cinematecaFilter, setCinematecaFilter] = useState<CinematecaFilter>("todos"); const [expandedCard, setExpandedCard] = useState<string | null>(null); const [trailerOpen, setTrailerOpen] = useState(false); const [trailerKey, setTrailerKey] = useState<string | null>(null); const [toasts, setToasts] = useState<ToastMessage[]>([]); const [shareLoading, setShareLoading] = useState(false); const [isOnboardingLoading, setIsOnboardingLoading] = useState(false); const [posterLoadError, setPosterLoadError] = useState(false); const [cinematecaPosterErrors, setCinematecaPosterErrors] = useState<Record<number, boolean>>({}); const [detailModalItem, setDetailModalItem] = useState<CinematecaItem | null>(null);
   const quizRef = useRef(quiz); quizRef.current = quiz; const cachedMoviesRef = useRef<Movie[]>(cachedMovies); cachedMoviesRef.current = cachedMovies; const movieRef = useRef<Movie | null>(movie); movieRef.current = movie; const loadingInterval = useRef<NodeJS.Timeout | null>(null);
   const toast = useCallback((text: string, type: ToastMessage["type"] = "info") => { const id = crypto.randomUUID(); setToasts((prev) => [...prev, { id, text, type }]); setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500); }, []);
   const dismissToast = useCallback((id: string) => setToasts((prev) => prev.filter((t) => t.id !== id)), []);
@@ -218,6 +206,7 @@ export default function Home() {
   useEffect(() => { setMounted(true); const savedName = safeGetItem("userName"); const savedPhone = safeGetItem("userPhone"); if (savedName && savedPhone) { setUserName(savedName); setUserPhone(savedPhone); setHasOnboarded(true); loadCinemateca(savedPhone); } }, [loadCinemateca]);
   useEffect(() => { if (isLoading) { setLoadingMsg(0); loadingInterval.current = setInterval(() => setLoadingMsg((p) => (p + 1) % LOADING_MESSAGES.length), 1800); } else { if (loadingInterval.current) clearInterval(loadingInterval.current); } return () => { if (loadingInterval.current) clearInterval(loadingInterval.current); }; }, [isLoading]);
   useEffect(() => { const shouldWarn = hasOnboarded && step > 1 && step < 8; if (!shouldWarn) return; const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", onBeforeUnload); return () => window.removeEventListener("beforeunload", onBeforeUnload); }, [hasOnboarded, step]);
+  useEffect(() => { setPosterLoadError(false); }, [movie?.id]);
 
   const handleOnboarding = useCallback(async () => { if (isOnboardingLoading) return; const cleanPhone = phoneDigits(userPhone); if (!userName.trim()) { toast("Falta seu nome!", "error"); return; } if (!isValidBRPhone(cleanPhone)) { toast("Celular inválido. Ex: (11) 91234-5678", "error"); return; } setIsOnboardingLoading(true); try { const normalizedName = userName.trim(); safeSetItem("userName", normalizedName); safeSetItem("userPhone", cleanPhone); const { data: existing } = await supabase.from("visitors").select("phone").eq("phone", cleanPhone).limit(1); if (!existing || existing.length === 0) { await supabase.from("visitors").insert({ name: normalizedName, phone: cleanPhone }); } setHasOnboarded(true); loadCinemateca(cleanPhone); } catch { toast("Algo deu errado, tenta de novo.", "error"); } finally { setIsOnboardingLoading(false); } }, [isOnboardingLoading, userName, userPhone, loadCinemateca, toast]);
   const resetQuiz = useCallback(() => { setQuiz({ mood: null, ritmo: null, vibe: null, companhia: null, epoca: null, streamings: [] }); setMovie(null); setStep(1); }, []);
@@ -225,7 +214,7 @@ export default function Home() {
   const getServerBlacklist = useCallback(async (): Promise<number[]> => { const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (!phone) return []; try { const { data } = await supabase.from("interactions").select("movie_id").eq("user_phone", phone).in("action", ["skipped", "watched"]); if (data) return data.map((row: { movie_id: number }) => row.movie_id); } catch {} return []; }, [userPhone]);
   const fetchMoviesFromServer = useCallback(async (blacklist: number[]) => { const filters = mapQuizToActionFilters(quizRef.current); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; const response = (await getMoviesAction({ filters, blacklist, userPhone: phone || undefined })) as ActionMovie[]; return response.filter((m) => Boolean(m.poster_path)).map((m) => ({ id: m.id, title: m.title, overview: m.overview, poster_path: m.poster_path, backdrop_path: m.backdrop_path, release_date: m.release_date, vote_average: m.vote_average, runtime: m.runtime, providers: (m as Movie).providers })) as Movie[]; }, [userPhone]);
 
-  const discoverMovie = useCallback(async (isSkipping = false) => { try { let blacklist = parseMovieBlacklistFromStorage(safeGetItem("movieMood_blacklist")); const serverBlacklist = await getServerBlacklist(); blacklist = [...new Set([...blacklist, ...serverBlacklist])]; if (isSkipping && movieRef.current) { blacklist.push(movieRef.current.id); if (blacklist.length > MAX_BLACKLIST) blacklist = blacklist.slice(-MAX_BLACKLIST); safeSetItem("movieMood_blacklist", JSON.stringify(blacklist.slice(-MAX_BLACKLIST))); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (phone) { void supabase.from("interactions").insert({ user_phone: phone, movie_id: movieRef.current.id, action: "skipped" }); } } if (isSkipping && cachedMoviesRef.current.length > 1) { const [, nextMovie, ...rest] = cachedMoviesRef.current; if (nextMovie) { setMovie(nextMovie); setCachedMovies([nextMovie, ...rest]); setStep(8); if (rest.length < 2) { void (async () => { try { const fresh = await fetchMoviesFromServer(blacklist); if (fresh.length === 0) return; setCachedMovies((prev) => { const merged = [...prev, ...fresh].filter((item, index, arr) => arr.findIndex((other) => other.id === item.id) === index); return merged.slice(0, 10); }); } catch {} })(); } return; } } setIsLoading(true); const movies = await fetchMoviesFromServer(blacklist); if (movies.length > 0) { setMovie(movies[0]); setCachedMovies(movies); setStep(8); } else { toast("Nenhum filme encontrado. Tenta mudar alguma escolha!", "info"); } } catch { toast("Ops, algo deu errado. Tenta de novo!", "error"); } finally { setIsLoading(false); } }, [fetchMoviesFromServer, getServerBlacklist, toast, userPhone]);
+  const discoverMovie = useCallback(async (isSkipping = false) => { try { const raw = safeGetItem("movieMood_blacklist") || "[]"; let blacklist: number[] = JSON.parse(raw); const serverBlacklist = await getServerBlacklist(); blacklist = [...new Set([...blacklist, ...serverBlacklist])]; if (isSkipping && movieRef.current) { blacklist.push(movieRef.current.id); if (blacklist.length > MAX_BLACKLIST) blacklist = blacklist.slice(-MAX_BLACKLIST); safeSetItem("movieMood_blacklist", JSON.stringify(blacklist.slice(-MAX_BLACKLIST))); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (phone) { void supabase.from("interactions").insert({ user_phone: phone, movie_id: movieRef.current.id, action: "skipped" }); } } if (isSkipping && cachedMoviesRef.current.length > 1) { const [, nextMovie, ...rest] = cachedMoviesRef.current; if (nextMovie) { setMovie(nextMovie); setCachedMovies([nextMovie, ...rest]); setStep(8); if (rest.length < 2) { void (async () => { try { const fresh = await fetchMoviesFromServer(blacklist); if (fresh.length === 0) return; setCachedMovies((prev) => { const merged = [...prev, ...fresh].filter((item, index, arr) => arr.findIndex((other) => other.id === item.id) === index); return merged.slice(0, 10); }); } catch {} })(); } return; } } setIsLoading(true); const movies = await fetchMoviesFromServer(blacklist); if (movies.length > 0) { setMovie(movies[0]); setCachedMovies(movies); setStep(8); } else { toast("Nenhum filme encontrado. Tenta mudar alguma escolha!", "info"); } } catch { toast("Ops, algo deu errado. Tenta de novo!", "error"); } finally { setIsLoading(false); } }, [fetchMoviesFromServer, getServerBlacklist, toast, userPhone]);
 
   const trackInteraction = useCallback(async (movieId: number, action: "viewed" | "skipped" | "saved" | "watched") => { const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (!phone) return; try { await supabase.from("interactions").insert({ user_phone: phone, movie_id: movieId, action }); } catch {} }, [userPhone]);
   useEffect(() => { if (!movie) return; void trackInteraction(movie.id, "viewed"); }, [movie, trackInteraction]);
@@ -253,7 +242,8 @@ export default function Home() {
     const name = userName || safeGetItem("userName") || "";
     setIsSaving(true);
     const item: CinematecaItem = { user_phone: phone, user_name: name, movie_id: m.id, movie_title: m.title, poster_path: m.poster_path, status: "ja_visto", rating: null };
-    const parsed = parseMovieBlacklistFromStorage(safeGetItem("movieMood_blacklist"));
+    const raw = safeGetItem("movieMood_blacklist") || "[]";
+    const parsed = JSON.parse(raw) as number[];
     const updated = [...parsed, m.id].slice(-MAX_BLACKLIST);
     safeSetItem("movieMood_blacklist", JSON.stringify(updated));
     const discoverPromise = discoverMovie(true);
@@ -531,6 +521,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen text-white transition-all duration-700 relative" style={{ background: theme.bg }}>
+      {step === 8 && movie?.backdrop_path && (<div className="fixed inset-0 -z-10"><div className="absolute inset-0 bg-center bg-cover opacity-[0.15] blur-[50px] scale-110" style={{ backgroundImage: `url(https://image.tmdb.org/t/p/w780${movie.backdrop_path})` }} /><div className="absolute inset-0 bg-black/80" style={{ WebkitMaskImage: "radial-gradient(circle at center, transparent 18%, black 72%)", maskImage: "radial-gradient(circle at center, transparent 18%, black 72%)" }} /></div>)}
       <div className="fixed inset-0 pointer-events-none opacity-[0.025]" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E\")" }} />
 
       <div className="relative z-10 p-4 sm:p-6">
@@ -581,116 +572,37 @@ export default function Home() {
                   </motion.section>
                 ) : movie && (
                   <AnimatePresence mode="wait">
-                    <motion.section
-                      key={movie.id}
-                      initial={{ opacity: 0, y: 20, scale: 0.995 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -12, scale: 0.995 }}
-                      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-                      className="relative overflow-hidden rounded-[2.5rem] border border-white/[0.09] shadow-2xl ring-1 ring-black/40"
-                    >
-                      {movie.poster_path ? (
-                        <>
-                          <div className="pointer-events-none absolute inset-0 overflow-hidden">
-                            <Image
-                              src={`https://image.tmdb.org/t/p/w780${movie.poster_path}`}
-                              alt=""
-                              fill
-                              className="scale-[1.15] object-cover blur-3xl"
-                              sizes="100vw"
-                              aria-hidden
-                            />
-                          </div>
-                          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-black/80 via-black/72 to-black/85" />
-                          <div className="pointer-events-none absolute inset-0 bg-black/35" />
-                        </>
-                      ) : (
-                        <div className="absolute inset-0 bg-gradient-to-br from-zinc-950 via-black to-zinc-950" />
-                      )}
-                      <div className="relative z-10 flex flex-col gap-8 p-6 sm:p-8 md:flex-row md:items-center md:gap-10 md:p-10 lg:gap-12 lg:p-12">
-                        <div className="flex w-full shrink-0 justify-center md:w-[min(38%,20rem)] md:max-w-xs lg:max-w-sm">
-                          <div className="relative aspect-[2/3] w-full max-w-[min(100%,280px)] sm:max-w-[300px] md:max-w-full">
-                            {movie.poster_path ? (
-                              <Image
-                                src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
-                                alt={movie.title}
-                                fill
-                                sizes="(max-width: 768px) 280px, 360px"
-                                className="object-contain drop-shadow-[0_25px_50px_rgba(0,0,0,0.55)]"
-                                priority
-                              />
-                            ) : (
-                              <div className="flex h-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-center text-sm text-zinc-500">
-                                <span className="px-4">Poster indisponível</span>
-                              </div>
-                            )}
-                          </div>
+                  <motion.div key={movie.id} initial={{ opacity: 0, y: 24, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -14, scale: 0.98 }} transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }} className="grid md:grid-cols-[360px_1fr] lg:grid-cols-[400px_1fr] gap-8 md:gap-12 items-start">
+                    <div className="relative group mx-auto md:mx-0 max-w-[360px] md:max-w-none">
+                      <div className="absolute -inset-2 rounded-[2.5rem] opacity-25 blur-2xl transition-opacity duration-700 group-hover:opacity-40" style={{ background: theme.glow }} />
+                      <div className="relative rounded-[2rem] overflow-hidden border border-white/10 shadow-2xl">{!posterLoadError && movie.poster_path ? (<Image src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`} width={400} height={600} className="w-full transition-transform duration-700 group-hover:scale-[1.02]" alt={`Poster de ${movie.title}`} priority onError={() => setPosterLoadError(true)} />) : (<div className="aspect-[2/3] w-full bg-gradient-to-br from-zinc-900 to-zinc-950 flex items-center justify-center text-zinc-400"><div className="text-center px-6"><Clapperboard size={30} className="mx-auto mb-3 text-zinc-500" /><p className="font-semibold text-sm">Poster indisponível</p></div></div>)}</div>
+                    </div>
+                    <div>
+                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-widest font-medium mb-4 px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/[0.04]"><Sparkles size={12} className="text-amber-400" /> <span className="text-zinc-400">Feito pra esse momento</span></motion.div>
+                      <motion.h1 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }} className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-5 tracking-tight leading-[1.1]">{movie.title}</motion.h1>
+                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.22 }} className="flex flex-wrap gap-2 mb-4">
+                        <span className="px-3 py-1.5 bg-zinc-800/55 backdrop-blur-md border border-white/10 rounded-xl text-xs font-bold text-zinc-200 flex items-center gap-1.5"><Star size={12} className="text-yellow-400" fill="currentColor" /> {movie.vote_average.toFixed(1)}</span>
+                        <span className="px-3 py-1.5 bg-zinc-800/55 backdrop-blur-md border border-white/10 rounded-xl text-xs font-bold text-zinc-200">{movie.release_date?.split("-")[0] || "—"}</span>
+                        {movie.runtime && movie.runtime > 0 && <span className="px-3 py-1.5 bg-zinc-800/55 backdrop-blur-md border border-white/10 rounded-xl text-xs font-bold text-zinc-200">{formatRuntime(movie.runtime)}</span>}
+                        {quiz.mood && <span className="px-3 py-1.5 border rounded-xl text-xs font-bold flex items-center gap-1.5" style={{ borderColor: theme.border, color: theme.glow, background: `${theme.glow}15` }}><quiz.mood.Icone size={12} /> {quiz.mood.nome}</span>}
+                      </motion.div>
+                      {visibleProviders.length > 0 && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.26 }} className="flex flex-wrap items-center gap-2 mb-8"><span className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium mr-1">Disponível em</span>{visibleProviders.map((p) => <ProviderBadge key={p.provider_id} provider={p} />)}</motion.div>)}
+                      {visibleProviders.length === 0 && <div className="mb-4" />}
+                      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="text-zinc-400 text-base sm:text-lg leading-relaxed mb-10">{movie.overview || "Sem sinopse disponível, mas confia — esse vale a pena."}</motion.p>
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.38 }} className="space-y-3">
+                        <div className="flex flex-wrap gap-3">
+                          <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => openTrailer(movie.id)} className="px-6 sm:px-8 py-3.5 bg-white text-black border border-white rounded-2xl flex items-center gap-2.5 hover:bg-zinc-100 transition font-semibold text-sm sm:text-base disabled:opacity-60 disabled:cursor-not-allowed"><Play size={18} /> Ver Trailer</motion.button>
+                          <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => addToCinemateca(movie)} className="px-6 sm:px-8 py-3.5 bg-white/10 backdrop-blur-md text-white border border-white/25 rounded-2xl flex items-center gap-2.5 hover:bg-white/20 transition font-semibold text-sm sm:text-base disabled:opacity-60 disabled:cursor-not-allowed"><BookmarkPlus size={18} /> Salvar</motion.button>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="w-full rounded-2xl border border-white/15 bg-white/[0.07] p-6 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-2xl sm:p-8 md:rounded-3xl md:p-9">
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-4 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-xs font-medium uppercase tracking-widest backdrop-blur-md">
-                              <Sparkles size={12} className="text-amber-400" />
-                              <span className="text-zinc-400">Feito pra esse momento</span>
-                            </motion.div>
-                            <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }} className="mb-5 text-3xl font-bold leading-[1.12] tracking-tight sm:text-4xl lg:text-[2.75rem]">
-                              {movie.title}
-                            </motion.h1>
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.16 }} className="mb-4 flex flex-wrap gap-2">
-                              <span className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/25 px-3 py-1.5 text-xs font-bold text-zinc-100 backdrop-blur-md">
-                                <Star size={12} className="text-yellow-400" fill="currentColor" /> {movie.vote_average.toFixed(1)}
-                              </span>
-                              <span className="rounded-xl border border-white/10 bg-black/25 px-3 py-1.5 text-xs font-bold text-zinc-200 backdrop-blur-md">{movie.release_date?.split("-")[0] || "—"}</span>
-                              {movie.runtime && movie.runtime > 0 && (
-                                <span className="rounded-xl border border-white/10 bg-black/25 px-3 py-1.5 text-xs font-bold text-zinc-200 backdrop-blur-md">{formatRuntime(movie.runtime)}</span>
-                              )}
-                              {quiz.mood && (
-                                <span className="flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold backdrop-blur-md" style={{ borderColor: theme.border, color: theme.glow, background: `${theme.glow}18` }}>
-                                  <quiz.mood.Icone size={12} /> {quiz.mood.nome}
-                                </span>
-                              )}
-                            </motion.div>
-                            {visibleProviders.length > 0 && (
-                              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="mb-8 flex flex-wrap items-center gap-2">
-                                <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500">Disponível em</span>
-                                {visibleProviders.map((p) => (
-                                  <ProviderBadge key={p.provider_id} provider={p} />
-                                ))}
-                              </motion.div>
-                            )}
-                            {visibleProviders.length === 0 && <div className="mb-2" />}
-                            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.24 }} className="mb-8 text-base leading-relaxed text-zinc-300 sm:text-lg">
-                              {movie.overview || "Sem sinopse disponível, mas confia — esse vale a pena."}
-                            </motion.p>
-                            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="space-y-3">
-                              <div className="flex flex-wrap gap-3">
-                                <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => openTrailer(movie.id)} className="flex items-center gap-2.5 rounded-2xl border border-white bg-white px-6 py-3.5 text-sm font-semibold text-black transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 sm:px-8 sm:text-base">
-                                  <Play size={18} /> Ver Trailer
-                                </motion.button>
-                                <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => addToCinemateca(movie)} className="flex items-center gap-2.5 rounded-2xl border border-white/25 bg-white/10 px-6 py-3.5 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60 sm:px-8 sm:text-base">
-                                  <BookmarkPlus size={18} /> Salvar
-                                </motion.button>
-                              </div>
-                              <div className="flex flex-wrap gap-3">
-                                <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => markAsWatched(movie)} className="flex items-center gap-2 rounded-xl border border-white/15 bg-black/20 px-4 py-2.5 text-xs font-medium text-zinc-300 backdrop-blur-sm transition hover:bg-white/[0.08] hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 sm:text-sm">
-                                  <CheckCircle2 size={16} /> Já vi esse
-                                </motion.button>
-                                <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => discoverMovie(true)} className="flex items-center gap-2 rounded-xl border border-white/15 bg-black/20 px-4 py-2.5 text-xs font-medium text-zinc-300 backdrop-blur-sm transition hover:bg-white/[0.08] hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 sm:text-sm">
-                                  <RefreshCw size={16} /> Outro filme
-                                </motion.button>
-                              </div>
-                              <div>
-                                <motion.button whileTap={{ scale: 0.95 }} onClick={() => shareMovie(movie)} disabled={isSaving || shareLoading} className="flex items-center gap-2 rounded-2xl border border-transparent px-5 py-3.5 text-sm text-zinc-300 transition [background:linear-gradient(rgba(0,0,0,0.35),rgba(0,0,0,0.35))_padding-box,linear-gradient(90deg,rgba(236,72,153,0.75),rgba(99,102,241,0.75))_border-box] hover:text-white disabled:opacity-50">
-                                  {shareLoading ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />} {shareLoading ? "Gerando..." : "Compartilhar"}
-                                </motion.button>
-                              </div>
-                            </motion.div>
-                            <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} className="mt-8 flex items-center gap-1.5 text-sm text-zinc-500 transition hover:text-white disabled:cursor-not-allowed disabled:opacity-60" onClick={resetQuiz}>
-                              <ArrowLeft size={14} /> Recomeçar quiz
-                            </motion.button>
-                          </div>
+                        <div className="flex flex-wrap gap-3">
+                          <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => markAsWatched(movie)} className="px-4 sm:px-5 py-2.5 bg-transparent border border-white/15 rounded-xl flex items-center gap-2 hover:bg-white/[0.06] transition font-medium text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"><CheckCircle2 size={16} /> Já vi esse</motion.button>
+                          <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} onClick={() => discoverMovie(true)} className="px-4 sm:px-5 py-2.5 bg-transparent border border-white/15 rounded-xl flex items-center gap-2 hover:bg-white/[0.06] transition font-medium text-zinc-400 hover:text-zinc-200 text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"><RefreshCw size={16} /> Outro filme</motion.button>
                         </div>
-                      </div>
-                    </motion.section>
+                        <div><motion.button whileTap={{ scale: 0.95 }} onClick={() => shareMovie(movie)} disabled={isSaving || shareLoading} className="px-5 py-3.5 rounded-2xl border border-transparent [background:linear-gradient(#0b0b10,#0b0b10)_padding-box,linear-gradient(90deg,rgba(236,72,153,0.8),rgba(99,102,241,0.8))_border-box] flex items-center gap-2 hover:brightness-125 transition text-zinc-300 hover:text-white text-sm disabled:opacity-50">{shareLoading ? <Loader2 size={16} className="animate-spin" /> : <Share2 size={16} />} {shareLoading ? "Gerando..." : "Compartilhar"}</motion.button></div>
+                      </motion.div>
+                      <motion.button whileTap={{ scale: 0.95 }} disabled={isSaving} className="mt-8 text-zinc-600 hover:text-white transition text-sm flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed" onClick={resetQuiz}><ArrowLeft size={14} /> Recomeçar quiz</motion.button>
+                    </div>
+                  </motion.div>
                   </AnimatePresence>
                 )}
               </div>
