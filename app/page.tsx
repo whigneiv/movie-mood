@@ -218,11 +218,101 @@ export default function Home() {
 
   const trackInteraction = useCallback(async (movieId: number, action: "viewed" | "skipped" | "saved" | "watched") => { const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (!phone) return; try { await supabase.from("interactions").insert({ user_phone: phone, movie_id: movieId, action }); } catch {} }, [userPhone]);
   useEffect(() => { if (!movie) return; void trackInteraction(movie.id, "viewed"); }, [movie, trackInteraction]);
-  const addToCinemateca = useCallback(async (m: Movie) => { if (isSaving) return; if (cinemateca.some((item) => item.movie_id === m.id)) { toast("Esse já tá na sua lista!", "info"); return; } const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; const name = userName || safeGetItem("userName") || ""; const item: CinematecaItem = { user_phone: phone, user_name: name, movie_id: m.id, movie_title: m.title, poster_path: m.poster_path, status: "para_ver", rating: null }; setIsSaving(true); try { const { data, error } = await supabase.from("cinemateca").upsert(item).select(); if (error) throw error; setCinemateca((prev) => [data?.[0] ?? item, ...prev]); toast("Salvo na Cinemateca!", "success"); void trackInteraction(m.id, "saved"); } catch { toast("Ops, tenta de novo!", "error"); } finally { setIsSaving(false); } }, [cinemateca, isSaving, trackInteraction, userPhone, userName, toast]);
-  const markAsWatched = useCallback(async (m: Movie) => { if (isSaving) return; const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; const name = userName || safeGetItem("userName") || ""; setIsSaving(true); const item: CinematecaItem = { user_phone: phone, user_name: name, movie_id: m.id, movie_title: m.title, poster_path: m.poster_path, status: "ja_visto", rating: null }; setCinemateca((prev) => { const filtered = prev.filter((x) => x.movie_id !== m.id); return [item, ...filtered]; }); const raw = safeGetItem("movieMood_blacklist") || "[]"; const parsed = JSON.parse(raw) as number[]; const updated = [...parsed, m.id].slice(-MAX_BLACKLIST); safeSetItem("movieMood_blacklist", JSON.stringify(updated)); const discoverPromise = discoverMovie(true); void trackInteraction(m.id, "watched"); try { await supabase.from("cinemateca").upsert(item); } catch { toast("Ops, tenta de novo!", "error"); } finally { setIsSaving(false); } await discoverPromise; }, [discoverMovie, isSaving, toast, trackInteraction, userName, userPhone]);
-  const toggleStatus = useCallback(async (item: CinematecaItem) => { if (isSaving) return; const newStatus = item.status === "para_ver" ? "ja_visto" : "para_ver"; setIsSaving(true); try { const { error } = await supabase.from("cinemateca").update({ status: newStatus }).eq("id", item.id); if (error) throw error; setCinemateca((prev) => prev.map((c) => c.id === item.id ? { ...c, status: newStatus as CinematecaItem["status"] } : c)); setDetailModalItem((prev) => prev && prev.id === item.id ? { ...prev, status: newStatus as CinematecaItem["status"] } : prev); toast(newStatus === "ja_visto" ? "Pronto, marcado!" : "Voltou pra fila!", "success"); } catch { toast("Ops, tenta de novo!", "error"); } finally { setIsSaving(false); } }, [isSaving, toast]);
-  const updateRating = useCallback(async (item: CinematecaItem, rating: number) => { try { const { error } = await supabase.from("cinemateca").update({ rating }).eq("id", item.id); if (error) throw error; setCinemateca((prev) => prev.map((c) => (c.id === item.id ? { ...c, rating } : c))); setDetailModalItem((prev) => prev && prev.id === item.id ? { ...prev, rating } : prev); } catch {} }, []);
-  const removeFromCinemateca = useCallback(async (item: CinematecaItem) => { if (isSaving) return; if (!confirm("Remover este filme da sua Cinemateca?")) return; setIsSaving(true); try { const { error } = await supabase.from("cinemateca").delete().eq("id", item.id); if (error) throw error; setCinemateca((prev) => prev.filter((c) => c.id !== item.id)); setExpandedCard(null); setDetailModalItem(null); toast("Filme removido.", "info"); } catch { toast("Ops, tenta de novo!", "error"); } finally { setIsSaving(false); } }, [isSaving, toast]);
+  const addToCinemateca = useCallback(async (m: Movie) => {
+    if (isSaving) return;
+    if (cinemateca.some((item) => item.movie_id === m.id)) { toast("Esse já tá na sua lista!", "info"); return; }
+    const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || "";
+    const name = userName || safeGetItem("userName") || "";
+    const item: CinematecaItem = { user_phone: phone, user_name: name, movie_id: m.id, movie_title: m.title, poster_path: m.poster_path, status: "para_ver", rating: null };
+    setIsSaving(true);
+    try {
+      const { data, error } = await supabase.from("cinemateca").upsert(item).select().single();
+      if (error) throw error;
+      if (!data) throw new Error("No cinemateca row returned");
+      setCinemateca((prev) => [data, ...prev.filter((x) => !(x.user_phone === data.user_phone && x.movie_id === data.movie_id))]);
+      toast("Salvo na Cinemateca!", "success");
+      void trackInteraction(m.id, "saved");
+    } catch { toast("Ops, tenta de novo!", "error"); }
+    finally { setIsSaving(false); }
+  }, [cinemateca, isSaving, trackInteraction, userPhone, userName, toast]);
+
+  const markAsWatched = useCallback(async (m: Movie) => {
+    if (isSaving) return;
+    const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || "";
+    const name = userName || safeGetItem("userName") || "";
+    setIsSaving(true);
+    const item: CinematecaItem = { user_phone: phone, user_name: name, movie_id: m.id, movie_title: m.title, poster_path: m.poster_path, status: "ja_visto", rating: null };
+    const raw = safeGetItem("movieMood_blacklist") || "[]";
+    const parsed = JSON.parse(raw) as number[];
+    const updated = [...parsed, m.id].slice(-MAX_BLACKLIST);
+    safeSetItem("movieMood_blacklist", JSON.stringify(updated));
+    const discoverPromise = discoverMovie(true);
+    void trackInteraction(m.id, "watched");
+    try {
+      const { data, error } = await supabase.from("cinemateca").upsert(item).select().single();
+      if (error) throw error;
+      if (!data) throw new Error("No cinemateca row returned");
+      setCinemateca((prev) => [data, ...prev.filter((x) => !(x.user_phone === data.user_phone && x.movie_id === data.movie_id))]);
+    } catch { toast("Ops, tenta de novo!", "error"); }
+    finally { setIsSaving(false); }
+    await discoverPromise;
+  }, [discoverMovie, isSaving, toast, trackInteraction, userName, userPhone]);
+
+  const toggleStatus = useCallback(async (item: CinematecaItem) => {
+    if (isSaving) return;
+    const newStatus = item.status === "para_ver" ? "ja_visto" : "para_ver";
+    setIsSaving(true);
+    try {
+      const { data, error } = await supabase
+        .from("cinemateca")
+        .update({ status: newStatus })
+        .eq("user_phone", item.user_phone)
+        .eq("movie_id", item.movie_id)
+        .select()
+        .single();
+      if (error) throw error;
+      if (!data) throw new Error("No cinemateca row returned");
+      setCinemateca((prev) => prev.map((c) => (c.user_phone === data.user_phone && c.movie_id === data.movie_id ? data : c)));
+      setDetailModalItem((prev) => (prev && prev.user_phone === data.user_phone && prev.movie_id === data.movie_id ? data : prev));
+      toast(newStatus === "ja_visto" ? "Pronto, marcado!" : "Voltou pra fila!", "success");
+    } catch { toast("Ops, tenta de novo!", "error"); }
+    finally { setIsSaving(false); }
+  }, [isSaving, toast]);
+
+  const updateRating = useCallback(async (item: CinematecaItem, rating: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("cinemateca")
+        .update({ rating })
+        .eq("user_phone", item.user_phone)
+        .eq("movie_id", item.movie_id)
+        .select()
+        .single();
+      if (error) throw error;
+      if (!data) throw new Error("No cinemateca row returned");
+      setCinemateca((prev) => prev.map((c) => (c.user_phone === data.user_phone && c.movie_id === data.movie_id ? data : c)));
+      setDetailModalItem((prev) => (prev && prev.user_phone === data.user_phone && prev.movie_id === data.movie_id ? data : prev));
+    } catch {}
+  }, []);
+
+  const removeFromCinemateca = useCallback(async (item: CinematecaItem) => {
+    if (isSaving) return;
+    if (!confirm("Remover este filme da sua Cinemateca?")) return;
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from("cinemateca")
+        .delete()
+        .eq("user_phone", item.user_phone)
+        .eq("movie_id", item.movie_id);
+      if (error) throw error;
+      setCinemateca((prev) => prev.filter((c) => !(c.user_phone === item.user_phone && c.movie_id === item.movie_id)));
+      setExpandedCard(null);
+      setDetailModalItem((prev) => (prev && prev.user_phone === item.user_phone && prev.movie_id === item.movie_id ? null : prev));
+      toast("Filme removido.", "info");
+    } catch { toast("Ops, tenta de novo!", "error"); }
+    finally { setIsSaving(false); }
+  }, [isSaving, toast]);
 
   const shareMovie = useCallback(async (m: Movie) => {
     setShareLoading(true);
