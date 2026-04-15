@@ -55,7 +55,7 @@ export type QuizFiltersInput = {
   companhia?: Companhia | null;
 };
 
-export async function buildMoviesFiltersFromQuiz(quiz: QuizFiltersInput): MoviesFilters {
+export function buildMoviesFiltersFromQuiz(quiz: QuizFiltersInput): MoviesFilters {
   const providers = quiz.streamings
     .map((s) => STREAMING_PROVIDER_IDS[s])
     .filter(Boolean)
@@ -309,6 +309,47 @@ export async function getMoviesAction({
     .map((item) => item.movie);
 
   return hydrateRuntimeTop(ranked);
+}
+
+/** Resolve a single movie from TMDB search (poster, runtime, providers) for AI-picked titles. */
+export async function getMovieBySearchTitleAction(input: {
+  title: string;
+  blacklist: number[];
+  userPhone?: string;
+}): Promise<TMDBMovie | null> {
+  const trimmed = input.title.trim();
+  if (!trimmed) return null;
+
+  const cinematecaMovieIds = await getCinematecaMovieIds(input.userPhone);
+  const blocked = new Set<number>([
+    ...input.blacklist,
+    ...cinematecaMovieIds,
+  ]);
+
+  const data = await fetchTMDB(
+    `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(trimmed)}&language=pt-BR&page=1`
+  );
+  const candidates = (data.results ?? []).filter(
+    (m) => Boolean(m.poster_path) && !blocked.has(m.id)
+  );
+  const pick = candidates[0];
+  if (!pick) return null;
+
+  const [detail, providers] = await Promise.all([
+    fetchTMDB(
+      `https://api.themoviedb.org/3/movie/${pick.id}?language=pt-BR`
+    ) as Promise<TMDBMovie>,
+    getMovieProviders(pick.id),
+  ]);
+
+  return {
+    ...pick,
+    ...detail,
+    overview: detail.overview || pick.overview,
+    poster_path: pick.poster_path ?? detail.poster_path,
+    backdrop_path: pick.backdrop_path ?? detail.backdrop_path,
+    providers,
+  };
 }
 
 export async function getTrailerAction(movieId: number): Promise<string | null> {

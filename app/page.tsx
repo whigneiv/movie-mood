@@ -10,8 +10,10 @@ import {
   Sparkles, Star, Trash2, Tv, UserRound, Users, X, Zap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { getAIRecommendation } from "@/app/actions/ai";
 import {
   buildMoviesFiltersFromQuiz,
+  getMovieBySearchTitleAction,
   getMoviesAction,
   getTrailerAction,
 } from "@/app/actions/movies";
@@ -161,6 +163,21 @@ function formatPhone(raw: string): string { const digits = raw.replace(/\D/g, ""
 function phoneDigits(formatted: string): string { return formatted.replace(/\D/g, ""); }
 function formatRuntime(runtime?: number): string { if (!runtime || runtime <= 0) return ""; const h = Math.floor(runtime / 60); const m = runtime % 60; if (h === 0) return `${m}m`; if (m === 0) return `${h}h`; return `${h}h ${m}m`; }
 function getSelectionLabel(value: string): string { return SELECTION_LABELS[value] ?? value.replaceAll("_", " "); }
+function buildQuizPromptSummary(quiz: QuizState): string {
+  const lines: string[] = [];
+  if (quiz.mood) lines.push(`Overall mood: ${quiz.mood.nome} — ${quiz.mood.categoria}. ${quiz.mood.sub}`);
+  if (quiz.vibe) lines.push(`Story type: ${getSelectionLabel(quiz.vibe)}`);
+  if (quiz.ritmo) lines.push(`Pacing: ${getSelectionLabel(quiz.ritmo)}`);
+  if (quiz.companhia) lines.push(`Company / audience: ${getSelectionLabel(quiz.companhia)}`);
+  if (quiz.epoca) lines.push(`Era preference: ${getSelectionLabel(quiz.epoca)}`);
+  if (quiz.streamings.length > 0) {
+    const names = quiz.streamings.map((sid) => STREAMINGS.find((s) => s.id === sid)?.nome).filter(Boolean);
+    lines.push(`Streaming in Brazil (if relevant): ${names.join(", ")}`);
+  } else {
+    lines.push("Streaming: no specific platform required.");
+  }
+  return lines.join("\n");
+}
 function isValidBRPhone(digits: string): boolean { if (digits.length !== 11) return false; const ddd = parseInt(digits.slice(0, 2), 10); if (ddd < 11 || ddd > 99) return false; return digits[2] === "9"; }
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] { const words = text.split(" "); const lines: string[] = []; let current = ""; for (const word of words) { const test = current ? `${current} ${word}` : word; if (ctx.measureText(test).width > maxWidth && current) { lines.push(current); current = word; } else { current = test; } } if (current) lines.push(current); return lines.slice(0, 3); }
 
@@ -202,13 +219,21 @@ function MovieDetailModal({ item, onClose, onToggleStatus, onRemove, onUpdateRat
    ═══════════════════════════════════════════ */
 
 export default function Home() {
-  const [mounted, setMounted] = useState(false); const [hasOnboarded, setHasOnboarded] = useState(false); const [userName, setUserName] = useState(""); const [userPhone, setUserPhone] = useState(""); const [activeTab, setActiveTab] = useState<Tab>("descobrir"); const [step, setStep] = useState<Step>(1); const [quiz, setQuiz] = useState<QuizState>({ mood: null, ritmo: null, vibe: null, companhia: null, epoca: null, streamings: [] }); const [movie, setMovie] = useState<Movie | null>(null); const [cachedMovies, setCachedMovies] = useState<Movie[]>([]); const [isSaving, setIsSaving] = useState(false); const [isLoading, setIsLoading] = useState(false); const [loadingMsg, setLoadingMsg] = useState(0); const [cinemateca, setCinemateca] = useState<CinematecaItem[]>([]); const [cinematecaLoading, setCinematecaLoading] = useState(false); const [cinematecaFilter, setCinematecaFilter] = useState<CinematecaFilter>("todos"); const [expandedCard, setExpandedCard] = useState<string | null>(null); const [trailerOpen, setTrailerOpen] = useState(false); const [trailerKey, setTrailerKey] = useState<string | null>(null); const [toasts, setToasts] = useState<ToastMessage[]>([]); const [shareLoading, setShareLoading] = useState(false); const [isOnboardingLoading, setIsOnboardingLoading] = useState(false); const [posterLoadError, setPosterLoadError] = useState(false); const [cinematecaPosterErrors, setCinematecaPosterErrors] = useState<Record<number, boolean>>({}); const [detailModalItem, setDetailModalItem] = useState<CinematecaItem | null>(null);
+  const [mounted, setMounted] = useState(false); const [hasOnboarded, setHasOnboarded] = useState(false); const [userName, setUserName] = useState(""); const [userPhone, setUserPhone] = useState(""); const [activeTab, setActiveTab] = useState<Tab>("descobrir"); const [step, setStep] = useState<Step>(1); const [quiz, setQuiz] = useState<QuizState>({ mood: null, ritmo: null, vibe: null, companhia: null, epoca: null, streamings: [] }); const [movie, setMovie] = useState<Movie | null>(null); const [cachedMovies, setCachedMovies] = useState<Movie[]>([]); const [isSaving, setIsSaving] = useState(false); const [isLoading, setIsLoading] = useState(false); const [loadingPhase, setLoadingPhase] = useState<"ai" | "tmdb" | null>(null); const [loadingMsg, setLoadingMsg] = useState(0); const [cinemateca, setCinemateca] = useState<CinematecaItem[]>([]); const [cinematecaLoading, setCinematecaLoading] = useState(false); const [cinematecaFilter, setCinematecaFilter] = useState<CinematecaFilter>("todos"); const [expandedCard, setExpandedCard] = useState<string | null>(null); const [trailerOpen, setTrailerOpen] = useState(false); const [trailerKey, setTrailerKey] = useState<string | null>(null); const [toasts, setToasts] = useState<ToastMessage[]>([]); const [shareLoading, setShareLoading] = useState(false); const [isOnboardingLoading, setIsOnboardingLoading] = useState(false); const [posterLoadError, setPosterLoadError] = useState(false); const [cinematecaPosterErrors, setCinematecaPosterErrors] = useState<Record<number, boolean>>({}); const [detailModalItem, setDetailModalItem] = useState<CinematecaItem | null>(null);
   const quizRef = useRef(quiz); quizRef.current = quiz; const cachedMoviesRef = useRef<Movie[]>(cachedMovies); cachedMoviesRef.current = cachedMovies; const movieRef = useRef<Movie | null>(movie); movieRef.current = movie; const loadingInterval = useRef<NodeJS.Timeout | null>(null);
   const toast = useCallback((text: string, type: ToastMessage["type"] = "info") => { const id = crypto.randomUUID(); setToasts((prev) => [...prev, { id, text, type }]); setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3500); }, []);
   const dismissToast = useCallback((id: string) => setToasts((prev) => prev.filter((t) => t.id !== id)), []);
   const loadCinemateca = useCallback(async (phone: string) => { setCinematecaLoading(true); try { const { data, error } = await supabase.from("cinemateca").select("*").eq("user_phone", phone).order("created_at", { ascending: false }); if (error) throw error; if (data) setCinemateca(data); } catch (err) { console.error("Erro ao carregar cinemateca:", err); } finally { setCinematecaLoading(false); } }, []);
   useEffect(() => { setMounted(true); const savedName = safeGetItem("userName"); const savedPhone = safeGetItem("userPhone"); if (savedName && savedPhone) { setUserName(savedName); setUserPhone(savedPhone); setHasOnboarded(true); loadCinemateca(savedPhone); } }, [loadCinemateca]);
-  useEffect(() => { if (isLoading) { setLoadingMsg(0); loadingInterval.current = setInterval(() => setLoadingMsg((p) => (p + 1) % LOADING_MESSAGES.length), 1800); } else { if (loadingInterval.current) clearInterval(loadingInterval.current); } return () => { if (loadingInterval.current) clearInterval(loadingInterval.current); }; }, [isLoading]);
+  useEffect(() => {
+    if (isLoading && loadingPhase === "tmdb") {
+      setLoadingMsg(0);
+      loadingInterval.current = setInterval(() => setLoadingMsg((p) => (p + 1) % LOADING_MESSAGES.length), 1800);
+    } else {
+      if (loadingInterval.current) clearInterval(loadingInterval.current);
+    }
+    return () => { if (loadingInterval.current) clearInterval(loadingInterval.current); };
+  }, [isLoading, loadingPhase]);
   useEffect(() => { const shouldWarn = hasOnboarded && step > 1 && step < 8; if (!shouldWarn) return; const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", onBeforeUnload); return () => window.removeEventListener("beforeunload", onBeforeUnload); }, [hasOnboarded, step]);
   useEffect(() => { setPosterLoadError(false); }, [movie?.id]);
 
@@ -243,7 +268,106 @@ export default function Home() {
       })) as Movie[];
   }, [userPhone]);
 
-  const discoverMovie = useCallback(async (isSkipping = false) => { try { const raw = safeGetItem("movieMood_blacklist"); let blacklist: number[] = safeParseMovieBlacklist(raw); const serverBlacklist = await getServerBlacklist(); blacklist = [...new Set([...blacklist, ...serverBlacklist])]; if (isSkipping && movieRef.current) { blacklist.push(movieRef.current.id); if (blacklist.length > MAX_BLACKLIST) blacklist = blacklist.slice(-MAX_BLACKLIST); safeSetItem("movieMood_blacklist", JSON.stringify(blacklist.slice(-MAX_BLACKLIST))); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (phone) { void supabase.from("interactions").insert({ user_phone: phone, movie_id: movieRef.current.id, action: "skipped" }); } } if (isSkipping && cachedMoviesRef.current.length > 1) { const [, nextMovie, ...rest] = cachedMoviesRef.current; if (nextMovie) { setMovie(nextMovie); setCachedMovies([nextMovie, ...rest]); setStep(8); if (rest.length < 2) { void (async () => { try { const fresh = await fetchMoviesFromServer(blacklist); if (fresh.length === 0) return; setCachedMovies((prev) => { const merged = [...prev, ...fresh].filter((item, index, arr) => arr.findIndex((other) => other.id === item.id) === index); return merged.slice(0, 10); }); } catch {} })(); } return; } } setIsLoading(true); const movies = await fetchMoviesFromServer(blacklist); if (movies.length > 0) { setMovie(movies[0]); setCachedMovies(movies); setStep(8); } else { toast("Nenhum filme encontrado. Tenta mudar alguma escolha!", "info"); } } catch { toast("Ops, algo deu errado. Tenta de novo!", "error"); } finally { setIsLoading(false); } }, [fetchMoviesFromServer, getServerBlacklist, toast, userPhone]);
+  const discoverMovie = useCallback(async (isSkipping = false) => {
+    try {
+      const raw = safeGetItem("movieMood_blacklist");
+      let blacklist: number[] = safeParseMovieBlacklist(raw);
+      const serverBlacklist = await getServerBlacklist();
+      blacklist = [...new Set([...blacklist, ...serverBlacklist])];
+      if (isSkipping && movieRef.current) {
+        blacklist.push(movieRef.current.id);
+        if (blacklist.length > MAX_BLACKLIST) blacklist = blacklist.slice(-MAX_BLACKLIST);
+        safeSetItem("movieMood_blacklist", JSON.stringify(blacklist.slice(-MAX_BLACKLIST)));
+        const phoneSkip = phoneDigits(userPhone) || safeGetItem("userPhone") || "";
+        if (phoneSkip) {
+          void supabase.from("interactions").insert({
+            user_phone: phoneSkip,
+            movie_id: movieRef.current.id,
+            action: "skipped",
+          });
+        }
+      }
+      if (isSkipping && cachedMoviesRef.current.length > 1) {
+        const [, nextMovie, ...rest] = cachedMoviesRef.current;
+        if (nextMovie) {
+          setMovie(nextMovie);
+          setCachedMovies([nextMovie, ...rest]);
+          setStep(8);
+          if (rest.length < 2) {
+            void (async () => {
+              try {
+                const fresh = await fetchMoviesFromServer(blacklist);
+                if (fresh.length === 0) return;
+                setCachedMovies((prev) => {
+                  const merged = [...prev, ...fresh].filter(
+                    (item, index, arr) => arr.findIndex((other) => other.id === item.id) === index
+                  );
+                  return merged.slice(0, 10);
+                });
+              } catch { /* prefetch best-effort */ }
+            })();
+          }
+        }
+        return;
+      }
+
+      setLoadingPhase("ai");
+      setIsLoading(true);
+      const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || "";
+      const avoidTitles = cachedMoviesRef.current.map((m) => m.title);
+      const quizSummary = buildQuizPromptSummary(quizRef.current);
+
+      const aiResult = await getAIRecommendation({ quizSummary, avoidTitles });
+      setLoadingPhase("tmdb");
+
+      let primary: Movie | null = null;
+      if (aiResult.ok) {
+        const resolved = await getMovieBySearchTitleAction({
+          title: aiResult.title,
+          blacklist,
+          userPhone: phone || undefined,
+        });
+        if (resolved && resolved.poster_path) {
+          primary = {
+            id: resolved.id,
+            title: resolved.title,
+            overview: resolved.overview,
+            poster_path: resolved.poster_path,
+            backdrop_path: resolved.backdrop_path,
+            release_date: resolved.release_date,
+            vote_average: resolved.vote_average,
+            runtime: resolved.runtime,
+            providers: resolved.providers,
+          };
+        } else {
+          toast(`Não achei "${aiResult.title}" no TMDB. Buscando alternativas…`, "info");
+        }
+      } else {
+        toast(aiResult.message, "error");
+      }
+
+      const fromDiscover = await fetchMoviesFromServer(blacklist);
+      const tail = fromDiscover.filter((m) => !primary || m.id !== primary.id);
+      const list = primary ? [primary, ...tail] : tail;
+      const deduped = list.filter(
+        (item, index, arr) => arr.findIndex((other) => other.id === item.id) === index
+      );
+      const finalList = deduped.slice(0, 10);
+
+      if (finalList.length === 0) {
+        toast("Nenhum filme encontrado. Tenta mudar alguma escolha!", "info");
+      } else {
+        setMovie(finalList[0]);
+        setCachedMovies(finalList);
+        setStep(8);
+      }
+    } catch {
+      toast("Ops, algo deu errado. Tenta de novo!", "error");
+    } finally {
+      setIsLoading(false);
+      setLoadingPhase(null);
+    }
+  }, [fetchMoviesFromServer, getServerBlacklist, toast, userPhone]);
 
   const trackInteraction = useCallback(async (movieId: number, action: "viewed" | "skipped" | "saved" | "watched") => { const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (!phone) return; try { await supabase.from("interactions").insert({ user_phone: phone, movie_id: movieId, action }); } catch {} }, [userPhone]);
   useEffect(() => { if (!movie) return; void trackInteraction(movie.id, "viewed"); }, [movie, trackInteraction]);
@@ -659,7 +783,50 @@ export default function Home() {
 
       <AnimatePresence>{trailerOpen && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 backdrop-blur-xl" onClick={() => setTrailerOpen(false)}><button className="absolute top-6 right-6 text-white/40 hover:text-white transition p-2" onClick={() => setTrailerOpen(false)} aria-label="Fechar"><X size={28} /></button><div className="w-full max-w-5xl aspect-video rounded-2xl overflow-hidden border border-white/10 shadow-2xl" onClick={(e) => e.stopPropagation()}>{trailerKey ? <iframe className="w-full h-full" src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1`} allow="autoplay; encrypted-media" allowFullScreen title="Trailer" /> : <div className="w-full h-full flex items-center justify-center bg-zinc-900"><Loader2 className="animate-spin text-zinc-500 mr-3" size={20} /><span className="text-zinc-500">Carregando...</span></div>}</div></motion.div>)}</AnimatePresence>
       <AnimatePresence>{detailModalItem && (<MovieDetailModal item={detailModalItem} onClose={() => setDetailModalItem(null)} onToggleStatus={toggleStatus} onRemove={removeFromCinemateca} onUpdateRating={updateRating} onOpenTrailer={openTrailer} isSaving={isSaving} />)}</AnimatePresence>
-      <AnimatePresence>{isLoading && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md"><motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="text-center"><div className="relative mx-auto mb-6 w-14 h-14"><Loader2 className="animate-spin text-white absolute inset-0" size={56} /></div><AnimatePresence mode="wait"><motion.p key={loadingMsg} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="text-sm tracking-widest uppercase font-medium text-zinc-300">{LOADING_MESSAGES[loadingMsg]}</motion.p></AnimatePresence></motion.div></motion.div>)}</AnimatePresence>
+      <AnimatePresence>
+        {isLoading && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md"
+          >
+            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="text-center px-6 max-w-md">
+              <div className="relative mx-auto mb-6 w-14 h-14">
+                {loadingPhase === "ai" ? (
+                  <Brain className="text-violet-300 absolute inset-0 mx-auto animate-pulse" size={56} />
+                ) : (
+                  <Loader2 className="animate-spin text-white absolute inset-0" size={56} />
+                )}
+              </div>
+              {loadingPhase === "ai" ? (
+                <motion.p
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-sm tracking-wide font-medium text-zinc-200"
+                >
+                  AI is thinking…
+                </motion.p>
+              ) : (
+                <AnimatePresence mode="wait">
+                  <motion.p
+                    key={loadingMsg}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    className="text-sm tracking-widest uppercase font-medium text-zinc-300"
+                  >
+                    {LOADING_MESSAGES[loadingMsg]}
+                  </motion.p>
+                </AnimatePresence>
+              )}
+              {loadingPhase === "tmdb" && (
+                <p className="text-[11px] text-zinc-500 mt-3">Buscando poster e detalhes no TMDB…</p>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
