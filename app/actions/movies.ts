@@ -35,6 +35,48 @@ type GetMoviesInput = {
   userPhone?: string;
 };
 
+/** TMDB watch provider IDs — mirrors quiz streaming picks (app/page STREAMINGS). */
+const STREAMING_PROVIDER_IDS: Record<string, string> = {
+  netflix: "8",
+  prime: "119",
+  disney: "337",
+  max: "384",
+  apple: "350",
+  globoplay: "307",
+};
+
+/** Serializable quiz slice for building discover filters (client passes this from quiz state). */
+export type QuizFiltersInput = {
+  moodGenreId?: number | null;
+  streamings: readonly string[];
+  epoca?: Epoca | null;
+  ritmo?: Ritmo | null;
+  vibe?: Vibe | null;
+  companhia?: Companhia | null;
+};
+
+export async function buildMoviesFiltersFromQuiz(quiz: QuizFiltersInput): MoviesFilters {
+  const providers = quiz.streamings
+    .map((s) => STREAMING_PROVIDER_IDS[s])
+    .filter(Boolean)
+    .join("|");
+  const yearMap: Partial<Record<Epoca, number>> = {
+    classicos: 1985,
+    anos_2000: 2005,
+    passados_recentes: 2018,
+    novinhos: new Date().getFullYear(),
+  };
+  return {
+    genreId: quiz.moodGenreId ?? undefined,
+    providers: providers || undefined,
+    year: quiz.epoca ? yearMap[quiz.epoca] : undefined,
+    ritmo: quiz.ritmo ?? undefined,
+    vibe: quiz.vibe ?? undefined,
+    companhia: quiz.companhia ?? undefined,
+    epoca: quiz.epoca ?? undefined,
+  };
+}
+
 /* [CHANGE #12] Provider type */
 type Provider = {
   provider_id: number;

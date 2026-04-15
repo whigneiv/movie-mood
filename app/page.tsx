@@ -10,7 +10,11 @@ import {
   Sparkles, Star, Trash2, Tv, UserRound, Users, X, Zap,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { getMoviesAction, getTrailerAction } from "@/app/actions/movies";
+import {
+  buildMoviesFiltersFromQuiz,
+  getMoviesAction,
+  getTrailerAction,
+} from "@/app/actions/movies";
 
 /* ═══════════════════════════════════════════
    TIPOS
@@ -143,6 +147,16 @@ const LOADING_MESSAGES = [
 function safeGetItem(key: string): string | null { if (typeof window === "undefined") return null; try { return localStorage.getItem(key); } catch { return null; } }
 function safeSetItem(key: string, value: string): void { if (typeof window === "undefined") return; try { localStorage.setItem(key, value); } catch {} }
 function safeRemoveItem(key: string): void { if (typeof window === "undefined") return; try { localStorage.removeItem(key); } catch {} }
+function safeParseMovieBlacklist(raw: string | null): number[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+  } catch {
+    return [];
+  }
+}
 function formatPhone(raw: string): string { const digits = raw.replace(/\D/g, "").slice(0, 11); if (digits.length <= 2) return digits; if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`; return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`; }
 function phoneDigits(formatted: string): string { return formatted.replace(/\D/g, ""); }
 function formatRuntime(runtime?: number): string { if (!runtime || runtime <= 0) return ""; const h = Math.floor(runtime / 60); const m = runtime % 60; if (h === 0) return `${m}m`; if (m === 0) return `${h}h`; return `${h}h ${m}m`; }
@@ -184,16 +198,6 @@ function MovieDetailModal({ item, onClose, onToggleStatus, onRemove, onUpdateRat
 }
 
 /* ═══════════════════════════════════════════
-   SERVER ACTION MAPPING
-   ═══════════════════════════════════════════ */
-
-function mapQuizToActionFilters(quiz: QuizState) {
-  const providers = quiz.streamings.map((s) => STREAMINGS.find((p) => p.id === s)?.providerId).filter(Boolean).join("|");
-  const yearMap: Partial<Record<Epoca, number>> = { classicos: 1985, anos_2000: 2005, passados_recentes: 2018, novinhos: new Date().getFullYear() };
-  return { genreId: quiz.mood?.tmdbGenreId, providers: providers || undefined, year: quiz.epoca ? yearMap[quiz.epoca] : undefined, ritmo: quiz.ritmo ?? undefined, vibe: quiz.vibe ?? undefined, companhia: quiz.companhia ?? undefined, epoca: quiz.epoca ?? undefined };
-}
-
-/* ═══════════════════════════════════════════
    COMPONENTE PRINCIPAL
    ═══════════════════════════════════════════ */
 
@@ -212,9 +216,34 @@ export default function Home() {
   const resetQuiz = useCallback(() => { setQuiz({ mood: null, ritmo: null, vibe: null, companhia: null, epoca: null, streamings: [] }); setMovie(null); setStep(1); }, []);
   const handleLogout = useCallback(() => { if (!confirm("Sair do Movie Mood?")) return; safeRemoveItem("userName"); safeRemoveItem("userPhone"); safeRemoveItem("movieMood_blacklist"); setUserName(""); setUserPhone(""); setHasOnboarded(false); setCinemateca([]); resetQuiz(); }, [resetQuiz]);
   const getServerBlacklist = useCallback(async (): Promise<number[]> => { const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (!phone) return []; try { const { data } = await supabase.from("interactions").select("movie_id").eq("user_phone", phone).in("action", ["skipped", "watched"]); if (data) return data.map((row: { movie_id: number }) => row.movie_id); } catch {} return []; }, [userPhone]);
-  const fetchMoviesFromServer = useCallback(async (blacklist: number[]) => { const filters = mapQuizToActionFilters(quizRef.current); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; const response = (await getMoviesAction({ filters, blacklist, userPhone: phone || undefined })) as ActionMovie[]; return response.filter((m) => Boolean(m.poster_path)).map((m) => ({ id: m.id, title: m.title, overview: m.overview, poster_path: m.poster_path, backdrop_path: m.backdrop_path, release_date: m.release_date, vote_average: m.vote_average, runtime: m.runtime, providers: (m as Movie).providers })) as Movie[]; }, [userPhone]);
+  const fetchMoviesFromServer = useCallback(async (blacklist: number[]) => {
+    const q = quizRef.current;
+    const filters = buildMoviesFiltersFromQuiz({
+      moodGenreId: q.mood?.tmdbGenreId,
+      streamings: q.streamings,
+      epoca: q.epoca,
+      ritmo: q.ritmo,
+      vibe: q.vibe,
+      companhia: q.companhia,
+    });
+    const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || "";
+    const response = (await getMoviesAction({ filters, blacklist, userPhone: phone || undefined })) as ActionMovie[];
+    return response
+      .filter((m) => Boolean(m.poster_path))
+      .map((m) => ({
+        id: m.id,
+        title: m.title,
+        overview: m.overview,
+        poster_path: m.poster_path,
+        backdrop_path: m.backdrop_path,
+        release_date: m.release_date,
+        vote_average: m.vote_average,
+        runtime: m.runtime,
+        providers: (m as Movie).providers,
+      })) as Movie[];
+  }, [userPhone]);
 
-  const discoverMovie = useCallback(async (isSkipping = false) => { try { const raw = safeGetItem("movieMood_blacklist") || "[]"; let blacklist: number[] = JSON.parse(raw); const serverBlacklist = await getServerBlacklist(); blacklist = [...new Set([...blacklist, ...serverBlacklist])]; if (isSkipping && movieRef.current) { blacklist.push(movieRef.current.id); if (blacklist.length > MAX_BLACKLIST) blacklist = blacklist.slice(-MAX_BLACKLIST); safeSetItem("movieMood_blacklist", JSON.stringify(blacklist.slice(-MAX_BLACKLIST))); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (phone) { void supabase.from("interactions").insert({ user_phone: phone, movie_id: movieRef.current.id, action: "skipped" }); } } if (isSkipping && cachedMoviesRef.current.length > 1) { const [, nextMovie, ...rest] = cachedMoviesRef.current; if (nextMovie) { setMovie(nextMovie); setCachedMovies([nextMovie, ...rest]); setStep(8); if (rest.length < 2) { void (async () => { try { const fresh = await fetchMoviesFromServer(blacklist); if (fresh.length === 0) return; setCachedMovies((prev) => { const merged = [...prev, ...fresh].filter((item, index, arr) => arr.findIndex((other) => other.id === item.id) === index); return merged.slice(0, 10); }); } catch {} })(); } return; } } setIsLoading(true); const movies = await fetchMoviesFromServer(blacklist); if (movies.length > 0) { setMovie(movies[0]); setCachedMovies(movies); setStep(8); } else { toast("Nenhum filme encontrado. Tenta mudar alguma escolha!", "info"); } } catch { toast("Ops, algo deu errado. Tenta de novo!", "error"); } finally { setIsLoading(false); } }, [fetchMoviesFromServer, getServerBlacklist, toast, userPhone]);
+  const discoverMovie = useCallback(async (isSkipping = false) => { try { const raw = safeGetItem("movieMood_blacklist"); let blacklist: number[] = safeParseMovieBlacklist(raw); const serverBlacklist = await getServerBlacklist(); blacklist = [...new Set([...blacklist, ...serverBlacklist])]; if (isSkipping && movieRef.current) { blacklist.push(movieRef.current.id); if (blacklist.length > MAX_BLACKLIST) blacklist = blacklist.slice(-MAX_BLACKLIST); safeSetItem("movieMood_blacklist", JSON.stringify(blacklist.slice(-MAX_BLACKLIST))); const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (phone) { void supabase.from("interactions").insert({ user_phone: phone, movie_id: movieRef.current.id, action: "skipped" }); } } if (isSkipping && cachedMoviesRef.current.length > 1) { const [, nextMovie, ...rest] = cachedMoviesRef.current; if (nextMovie) { setMovie(nextMovie); setCachedMovies([nextMovie, ...rest]); setStep(8); if (rest.length < 2) { void (async () => { try { const fresh = await fetchMoviesFromServer(blacklist); if (fresh.length === 0) return; setCachedMovies((prev) => { const merged = [...prev, ...fresh].filter((item, index, arr) => arr.findIndex((other) => other.id === item.id) === index); return merged.slice(0, 10); }); } catch {} })(); } return; } } setIsLoading(true); const movies = await fetchMoviesFromServer(blacklist); if (movies.length > 0) { setMovie(movies[0]); setCachedMovies(movies); setStep(8); } else { toast("Nenhum filme encontrado. Tenta mudar alguma escolha!", "info"); } } catch { toast("Ops, algo deu errado. Tenta de novo!", "error"); } finally { setIsLoading(false); } }, [fetchMoviesFromServer, getServerBlacklist, toast, userPhone]);
 
   const trackInteraction = useCallback(async (movieId: number, action: "viewed" | "skipped" | "saved" | "watched") => { const phone = phoneDigits(userPhone) || safeGetItem("userPhone") || ""; if (!phone) return; try { await supabase.from("interactions").insert({ user_phone: phone, movie_id: movieId, action }); } catch {} }, [userPhone]);
   useEffect(() => { if (!movie) return; void trackInteraction(movie.id, "viewed"); }, [movie, trackInteraction]);
@@ -242,8 +271,8 @@ export default function Home() {
     const name = userName || safeGetItem("userName") || "";
     setIsSaving(true);
     const item: CinematecaItem = { user_phone: phone, user_name: name, movie_id: m.id, movie_title: m.title, poster_path: m.poster_path, status: "ja_visto", rating: null };
-    const raw = safeGetItem("movieMood_blacklist") || "[]";
-    const parsed = JSON.parse(raw) as number[];
+    const raw = safeGetItem("movieMood_blacklist");
+    const parsed = safeParseMovieBlacklist(raw);
     const updated = [...parsed, m.id].slice(-MAX_BLACKLIST);
     safeSetItem("movieMood_blacklist", JSON.stringify(updated));
     const discoverPromise = discoverMovie(true);
